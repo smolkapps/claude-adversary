@@ -1,0 +1,8 @@
+{
+  "name": "adversary",
+  "version": "0.1.0",
+  "description": "Claude reviews Claude. A second, adversarial Claude instance second-guesses your work and can block stopping until issues are addressed.",
+  "author": {
+    "name": "Michael Smolkin"
+  }
+}
