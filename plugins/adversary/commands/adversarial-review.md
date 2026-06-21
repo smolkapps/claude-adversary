@@ -1,6 +1,6 @@
 ---
 description: Run a steerable, adversarial second-Claude review that challenges the approach and design, not just the code
-argument-hint: '[--base <ref>] [focus ...]'
+argument-hint: '[--fusion] [--panel N] [--base <ref>] [focus ...]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*)
 ---
@@ -14,6 +14,7 @@ Rules:
 - This command is review-only. Do NOT fix issues or apply patches; your only job is to run the review and return its output verbatim.
 - Any text after the flags is treated as focus, e.g. `/adversary:adversarial-review --base main challenge whether this caching design is right`. Preserve the user's focus text exactly; do not weaken the adversarial framing.
 - Default target is the working tree. `--base <ref>` reviews the branch against that ref.
+- `--fusion` (optionally `--panel N`) runs a multi-reviewer panel + a synthesizer instead of one critic.
 
 Run:
 

@@ -20,7 +20,11 @@ export const DEFAULT_CONFIG = {
   maxRounds: 3,
   // "edits" = only review turns that changed the working tree (cheap default).
   // "all"   = review every turn, even pure-prose answers.
-  gateScope: "edits"
+  gateScope: "edits",
+  // Panel size for the gate. 1 = single critic (default). >1 = fusion: N
+  // lens-diversified reviewers run in parallel, then a synthesizer reconciles
+  // them into the ALLOW/BLOCK verdict (more thorough, N+1x the cost).
+  gatePanel: 1
 };
 
 function defaultState() {

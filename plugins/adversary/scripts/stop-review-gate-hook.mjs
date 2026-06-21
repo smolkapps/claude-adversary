@@ -11,6 +11,7 @@ import {
   REVIEWER_ACTIVE_ENV
 } from "./lib/claude.mjs";
 import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
+import { fuse, formatPanel } from "./lib/fusion.mjs";
 import { getConfig, getRounds, bumpRounds, resetRounds } from "./lib/state.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 import { hasWorkingChanges, workingTreeDiff } from "./lib/git.mjs";
@@ -46,22 +47,35 @@ function loadPersona() {
   }
 }
 
-function buildPrompt(input, diffBlock) {
+function buildBlocks(input, diffBlock) {
   const last = String(input.last_assistant_message ?? "").trim();
-  const template = loadPromptTemplate(ROOT_DIR, "stop-review-gate");
   const claudeResponseBlock = last
     ? ["<previous_claude_response>", last, "</previous_claude_response>"].join("\n")
     : "";
   const changes = diffBlock
     ? ["<working_tree_changes>", diffBlock, "</working_tree_changes>"].join("\n")
     : "<working_tree_changes>(working tree is clean)</working_tree_changes>";
-  return interpolateTemplate(template, {
+  return { claudeResponseBlock, changes };
+}
+
+function buildPrompt(input, diffBlock) {
+  const { claudeResponseBlock, changes } = buildBlocks(input, diffBlock);
+  return interpolateTemplate(loadPromptTemplate(ROOT_DIR, "stop-review-gate"), {
     CLAUDE_RESPONSE_BLOCK: claudeResponseBlock,
     WORKING_TREE_CHANGES: changes
   });
 }
 
-function main() {
+function buildGateSynthPrompt(input, diffBlock, panelOutputs) {
+  const { claudeResponseBlock, changes } = buildBlocks(input, diffBlock);
+  return interpolateTemplate(loadPromptTemplate(ROOT_DIR, "fusion-synthesis-gate"), {
+    CLAUDE_RESPONSE_BLOCK: claudeResponseBlock,
+    WORKING_TREE_CHANGES: changes,
+    PANEL_REVIEWS: formatPanel(panelOutputs)
+  });
+}
+
+async function main() {
   // The reviewer's own Stop must never trigger another review.
   if (process.env[REVIEWER_ACTIVE_ENV]) {
     return;
@@ -110,12 +124,24 @@ function main() {
     }
   }
 
-  const review = runClaudeReview({
-    cwd: workspaceRoot,
-    prompt: buildPrompt(input, diffBlock),
-    systemPrompt: loadPersona(),
-    model: config.reviewerModel || "opus"
-  });
+  const panelSize = Number(config.gatePanel ?? 1);
+  const model = config.reviewerModel || "opus";
+  const review =
+    panelSize > 1
+      ? await fuse({
+          cwd: workspaceRoot,
+          model,
+          basePrompt: buildPrompt(input, diffBlock),
+          systemPrompt: loadPersona(),
+          panel: panelSize,
+          buildSynthesisPrompt: (panelOutputs) => buildGateSynthPrompt(input, diffBlock, panelOutputs)
+        })
+      : runClaudeReview({
+          cwd: workspaceRoot,
+          prompt: buildPrompt(input, diffBlock),
+          systemPrompt: loadPersona(),
+          model
+        });
 
   if (!review.ok) {
     // Fail open: a broken or timed-out reviewer must not block the user.
@@ -139,9 +165,7 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (error) {
+main().catch((error) => {
   // Never let a gate crash block the user.
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-}
+});

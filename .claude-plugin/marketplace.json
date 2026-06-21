@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Claude-vs-Claude adversarial review for Claude Code: a second Claude instance that second-guesses your work, on demand or as a Stop-time gate that refuses to let you stop until issues are addressed.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
       "name": "adversary",
       "description": "A second, adversarial Claude that reviews Claude's work — on demand or as a Stop-time review gate.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "Michael Smolkin"
       },

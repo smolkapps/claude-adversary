@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 // Set in the reviewer's environment so that the reviewer's OWN Stop hook
 // becomes a no-op. Without this, a gate review would recursively trigger
@@ -104,4 +104,85 @@ export function runClaudeReview({
     };
   }
   return { ok: true, output: (res.stdout || "").trim(), error: null };
+}
+
+/**
+ * Async variant of runClaudeReview, for running a panel of reviewers in
+ * parallel (fusion). Same flags and guards; never rejects — resolves to
+ * { ok, output, error, timedOut }.
+ */
+export function runClaudeReviewAsync({
+  cwd,
+  prompt,
+  systemPrompt,
+  model,
+  timeoutMs = 14 * 60 * 1000,
+  maxTurns = 40
+}) {
+  return new Promise((resolve) => {
+    const args = ["-p"];
+    if (model) {
+      args.push("--model", model);
+    }
+    if (systemPrompt) {
+      args.push("--append-system-prompt", systemPrompt);
+    }
+    args.push("--allowedTools", READONLY_TOOLS.join(","));
+    args.push("--max-turns", String(maxTurns));
+    args.push(prompt);
+
+    const env = { ...process.env, [REVIEWER_ACTIVE_ENV]: "1" };
+
+    let child;
+    try {
+      child = spawn(claudeCli(), args, { cwd, env });
+    } catch (err) {
+      resolve({ ok: false, output: "", error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      finish({ ok: false, timedOut: true, output: stdout.trim(), error: "reviewer timed out" });
+    }, timeoutMs);
+    timer.unref?.();
+
+    child.stdout.on("data", (d) => {
+      stdout += d;
+    });
+    child.stderr.on("data", (d) => {
+      stderr += d;
+    });
+    child.on("error", (err) => {
+      finish({ ok: false, output: "", error: err instanceof Error ? err.message : String(err) });
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        finish({ ok: true, output: stdout.trim(), error: null });
+      } else {
+        finish({
+          ok: false,
+          output: stdout.trim(),
+          error: (stderr || stdout || `claude exited ${code}`).trim()
+        });
+      }
+    });
+
+    if (child.stdin) {
+      child.stdin.end();
+    }
+  });
 }
