@@ -9,7 +9,7 @@ import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
 import { getConfig, setConfig, loadState } from "./lib/state.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 import { workingTreeDiff, branchDiff, hasWorkingChanges, isGitRepo } from "./lib/git.mjs";
-import { fuse, formatPanel, clampPanel } from "./lib/fusion.mjs";
+import { fuse, fuseTask, formatPanel, clampPanel } from "./lib/fusion.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(SCRIPT_DIR, "..");
@@ -206,6 +206,44 @@ async function cmdReview(flags, positional, cwd, workspaceRoot, { adversarial })
   if (!result.ok) process.exitCode = 1;
 }
 
+async function cmdFuse(flags, positional, cwd, workspaceRoot) {
+  const availability = getClaudeAvailability();
+  if (!availability.available) {
+    const msg = `Fusion unavailable: claude CLI not found (${availability.detail}). Run /adversary:setup.`;
+    if (flags.json) printJson({ ok: false, error: msg });
+    else printText(msg);
+    process.exitCode = 1;
+    return;
+  }
+
+  const task = positional.join(" ").trim();
+  if (!task) {
+    const msg =
+      "Give a task to fuse, e.g.  fuse implement a token-bucket rate limiter in src/limit.ts";
+    if (flags.json) printJson({ ok: false, error: msg });
+    else printText(msg);
+    process.exitCode = 1;
+    return;
+  }
+
+  const model = flags.model || getConfig(workspaceRoot).reviewerModel || "opus";
+  const result = await fuseTask({
+    rootDir: ROOT_DIR,
+    cwd: workspaceRoot,
+    model,
+    task,
+    panel: flags.panel ?? 3
+  });
+
+  if (flags.json) {
+    printJson({ ok: result.ok, output: result.output, error: result.error, drafts: result.drafts });
+  } else {
+    printText(`# Fusion of ${clampPanel(flags.panel ?? 3)} parallel drafts (${model}) -> synthesized solution\n`);
+    printText(result.output || result.error || "(no output)");
+  }
+  if (!result.ok) process.exitCode = 1;
+}
+
 async function main() {
   const subcommand = process.argv[2];
   const { flags, positional } = parseArgs(process.argv.slice(3));
@@ -221,9 +259,11 @@ async function main() {
       return cmdReview(flags, positional, cwd, workspaceRoot, { adversarial: false });
     case "adversarial-review":
       return cmdReview(flags, positional, cwd, workspaceRoot, { adversarial: true });
+    case "fuse":
+      return cmdFuse(flags, positional, cwd, workspaceRoot);
     default:
       process.stderr.write(`Unknown subcommand: ${subcommand ?? "(none)"}\n`);
-      process.stderr.write("Usage: claude-companion.mjs <setup|status|review|adversarial-review> [options]\n");
+      process.stderr.write("Usage: claude-companion.mjs <setup|status|review|adversarial-review|fuse> [options]\n");
       process.exitCode = 1;
       return undefined;
   }

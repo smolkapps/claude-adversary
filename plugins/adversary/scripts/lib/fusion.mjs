@@ -1,4 +1,5 @@
 import { runClaudeReviewAsync } from "./claude.mjs";
+import { loadPromptTemplate, interpolateTemplate } from "./prompts.mjs";
 
 // Same-model diversity comes from distinct LENSES (we only have Claude, not a
 // multi-vendor panel). Each panel member weights one lens but still reports
@@ -80,4 +81,70 @@ export async function fuse({
   });
 
   return { ok: synth.ok, output: synth.output, error: synth.error, panel: panelOutputs };
+}
+
+// ---------------------------------------------------------------------------
+// Task fusion (OpenRouter-Fusion style): N Claudes draft the SAME task in
+// parallel from different angles, then a synthesizer merges them into one
+// better solution. Unlike the review fuse() above, the *output is the answer*,
+// not a critique. This is the "two Claudes working together to get it done"
+// mode.
+// ---------------------------------------------------------------------------
+
+const FUSE_PERSONA =
+  "You are a strong, careful engineer producing the best possible solution to a task — correct, complete, and grounded in the actual code. You may read the repository with your tools, but do not edit files; deliver your solution as text.";
+
+const DRAFT_APPROACHES = [
+  "the simplest thing that fully works",
+  "maximum robustness — handle the edge cases, failure modes, and inputs others will overlook",
+  "a genuinely different approach (different algorithm, data structure, or framing) than the obvious one",
+  "performance and efficiency",
+  "clarity and long-term maintainability"
+];
+
+export function approachFor(index) {
+  return DRAFT_APPROACHES[index % DRAFT_APPROACHES.length];
+}
+
+export async function fuseTask({ rootDir, cwd, model, task, panel }) {
+  const total = clampPanel(panel);
+  const tmpl = (name, vars) => interpolateTemplate(loadPromptTemplate(rootDir, name), vars);
+
+  const drafts = await Promise.all(
+    Array.from({ length: total }, (_, i) =>
+      runClaudeReviewAsync({
+        cwd,
+        model,
+        systemPrompt: FUSE_PERSONA,
+        prompt: tmpl("fuse-draft", {
+          N: String(i + 1),
+          TOTAL: String(total),
+          APPROACH: approachFor(i),
+          TASK: task
+        })
+      }).then((r) => ({
+        draft: i + 1,
+        approach: approachFor(i),
+        ok: r.ok,
+        output: r.ok ? r.output : `(draft ${i + 1} did not complete: ${r.error || "unknown error"})`
+      }))
+    )
+  );
+
+  if (!drafts.some((d) => d.ok)) {
+    return { ok: false, output: "", error: "all drafts failed", drafts };
+  }
+
+  const draftsBlock = drafts
+    .map((d) => `### Draft ${d.draft} — approach: ${d.approach}\n${d.output}`)
+    .join("\n\n");
+
+  const synth = await runClaudeReviewAsync({
+    cwd,
+    model,
+    systemPrompt: FUSE_PERSONA,
+    prompt: tmpl("fuse-final", { TASK: task, DRAFTS: draftsBlock })
+  });
+
+  return { ok: synth.ok, output: synth.output, error: synth.error, drafts };
 }

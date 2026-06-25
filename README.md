@@ -1,6 +1,11 @@
 # adversary — Claude reviews Claude
 
-A Claude Code plugin that puts a **second, adversarial Claude** between your work and "done." It is the Claude-on-Claude analogue of the OpenAI `codex` plugin's review gate: instead of GPT/Codex reviewing Claude, a separate Claude instance reviews Claude — and can refuse to let you stop until real problems are addressed.
+A Claude Code plugin that puts a **second Claude** to work alongside the first — to make the *output better*, not just to police it. It does two things:
+
+- **Fuse** several independent Claude drafts of a task into one superior answer (the OpenRouter-Fusion shape: drafts → judge → synthesize).
+- **Review / gate** work adversarially — a separate Claude that critiques, and optionally blocks stopping until issues are addressed.
+
+Claude-on-Claude, the way the OpenAI `codex` plugin is GPT-on-Claude.
 
 > The point of an adversary is independence, not a different model. The reviewer is a *separate* Claude process with its own context and a system prompt whose entire job is to prove the work wrong, not to confirm it is right.
 
@@ -14,6 +19,7 @@ Treat that as support for the *idea*, not a benchmark of this plugin: OpenRouter
 
 ## What you get
 
+- **`/adversary:fuse "<task>"`** — the headline: N Claudes draft the task in parallel from different angles, then a synthesizer merges them into one better solution. Makes the *result* better. See [Fuse](#fuse--two-claudes-to-get-a-task-done).
 - **`/adversary:setup`** — check the `claude` CLI is ready and enable/disable the Stop-time review gate.
 - **`/adversary:review`** — a skeptical, read-only review of your current diff by a separate headless Claude.
 - **`/adversary:adversarial-review "<focus>"`** — a steerable challenge review that questions the *approach and design*, not just the code.
@@ -32,6 +38,20 @@ Treat that as support for the *idea*, not a benchmark of this plugin: OpenRouter
 ```
 
 `/adversary:setup` confirms the `claude` CLI is on your PATH (the reviewer is just `claude -p` under the hood).
+
+## Fuse — two Claudes to get a task done
+
+The point here isn't to block you; it's to get a **better answer**. `/adversary:fuse` runs several Claudes on the same task in parallel, each told to favor a different angle (simplicity, robustness, a different approach, performance, maintainability), then a **synthesizer** combines their strengths — and discards their mistakes — into one solution better than any single draft. This is the OpenRouter-Fusion shape (drafts → judge → synthesize) that matched Fable-level quality from Opus-on-Opus.
+
+```bash
+/adversary:fuse implement a token-bucket rate limiter in src/limit.ts
+/adversary:fuse --panel 2 design the retry/backoff policy for the upload queue   # literally two Claudes + a synthesizer
+/adversary:fuse --panel 4 --model opus what is the cleanest way to dedupe these events
+```
+
+It returns the synthesized solution (code, a diff, or an answer) for you to apply. The drafters are read-only — they *propose*; you (or the main Claude) apply the result. Cost is N+1 model calls run in parallel, so wall-clock ≈ one call.
+
+> **Two kinds of "fusion" here — don't conflate them.** `/adversary:fuse` fuses *solutions to a task*, so the **output** gets better. The `--fusion` flag on the review commands and gate fuses *critiques of a diff*, so the **review** gets better. Same engine, opposite direction.
 
 ## The review gate
 
@@ -55,9 +75,9 @@ the stop is blocked with the reviewer's findings; `ALLOW` -> you stop normally.
 - **Edits-scope fast path** — in the default `edits` scope, a clean working tree is allowed without spending a review at all.
 - **Read-only reviewer** — the reviewer is restricted to read/inspect tools; it cannot edit, commit, or push.
 
-## Fusion mode
+## Fusion review (consolidated critique)
 
-Because OpenRouter's result attributes most of the lift to the *synthesis* step, you can replace the single critic with a panel:
+This is the *review-side* cousin of [`/adversary:fuse`](#fuse--two-claudes-to-get-a-task-done): instead of fusing solutions, it fuses **critiques**. Replace the single reviewer with a panel:
 
 ```bash
 /adversary:review --fusion                  # 3 reviewers + a synthesizer over your diff
@@ -76,15 +96,15 @@ Cost scales with the panel: an N-panel run is N+1 reviewer invocations, run in p
 plugins/adversary/
   .claude-plugin/plugin.json
   hooks/hooks.json                 # Stop + SessionEnd
-  commands/                        # setup, review, adversarial-review, status
+  commands/                        # fuse, setup, review, adversarial-review, status
   agents/adversary-reviewer.md     # in-session second-opinion subagent
-  prompts/                         # persona + task templates + fusion synthesis
+  prompts/                         # persona + review/gate + fuse-draft/fuse-final + fusion synthesis
   skills/adversary-review/         # discovery skill
   scripts/
     stop-review-gate-hook.mjs      # the gate (single critic or fusion panel)
     session-lifecycle-hook.mjs     # per-session round cleanup
-    claude-companion.mjs           # setup/status/review/adversarial-review CLI
-    lib/                           # claude, git, state, verdict, prompts, workspace, fusion
+    claude-companion.mjs           # fuse/setup/status/review/adversarial-review CLI
+    lib/                           # claude, git, state, verdict, prompts, workspace, fusion (fuse + fuseTask)
 ```
 
 ## Develop
